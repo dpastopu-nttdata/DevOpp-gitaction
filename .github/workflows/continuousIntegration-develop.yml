@@ -33,6 +33,7 @@ jobs:
                   SFDXCLI: "SALESFORCE_SFDXCLI_VERSION"
             - name: Authenticate base org
               run: |
+                  echo "server.key --> {{ server.key }}"
                   echo "${{ secrets[env.JWT] }}" > server.key
                   sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl https://test.salesforce.com -a Int
               env:
