@@ -27,7 +27,7 @@ jobs:
                   cache: "npm"
             - name: Install Salesforce CLI
               run: |
-                  sudo npm install sfdx-cli@${{ secrets.SFDXCLI }} --location=global
+                  sudo npm install sfdx-cli@${{ secrets[env.SFDXCLI] }} --location=global
                   sfdx version --verbose --json
               env:
                   SFDXCLI: "SALESFORCE_SFDXCLI_VERSION"
