@@ -27,11 +27,9 @@ jobs:
                   cache: "npm"
             - name: Install Salesforce CLI
               run: |
-                  echo "Variable SFDXCLI " ${{ secrets.SFDXCLI2 }}
                   sudo npm install sfdx-cli@${{ secrets.SFDXCLI }} --location=global
                   sfdx version --verbose --json
               env:
-                  SFDXCLI2: ${{ secrets.SFDXCLI2 }}
                   SFDXCLI: "SALESFORCE_SFDXCLI_VERSION"
             - name: Authenticate base org
               run: |
