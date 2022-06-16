@@ -67,7 +67,7 @@ jobs:
                   path: sfdx-profiles-splitter
                   ref: master
               env:
-                  token: "${{ secrets."PERSONAL_GITHUB_TOKEN }}
+                  token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
             - name: Install sfdx-git-delta and sfdx-profiles-splitter 2
               run: |
                   cd sfdx-profiles-splitter
