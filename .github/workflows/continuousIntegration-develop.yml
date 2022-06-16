@@ -34,7 +34,7 @@ jobs:
             - name: Authenticate base org
               run: |
                   echo "${{ secrets[env.JWT] }}" > server.key
-                  sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl https://test.salesforce.com -a Int
+                  sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl https://login.salesforce.com -a Int
               env:
                   JWT: "SALESFORCE_JWT_SECRET_KEY"
                   ORG: "SALESFORCE_DEVELOP_CLIENT_ID"
