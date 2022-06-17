@@ -33,7 +33,7 @@ jobs:
               run: |
                   instance="https://test.salesforce.com"
                   if [ ${{ github.base_ref }} == 'master' ]; then
-                    instance="https://login.salesforce.com"
+                    instance="https://test.salesforce.com"
                   fi
                   echo "${{ secrets[env.JWT] }}" > server.key
                   sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl $instance -a ${{ github.base_ref }} -s
