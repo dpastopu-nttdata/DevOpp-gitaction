@@ -149,7 +149,7 @@ jobs:
                           apiVersion="${{ secrets.SFDX_GIT_DELTA_API_VERSION }}"
                         fi
                         mkdir output
-                        sfdx sgd:source:delta --to ${{ github.ref }} --from origin/${{ github.base_ref }} --repo . --output output -a $apiVersion
+                        sfdx sgd:source:delta --to ${{ github.ref }} --from origin/${{ github.base_ref }} --repo . --output output -a $apiVersion -d
                         echo "-- before uploadProfiles --"
                         if [ -s uploadProfiles.txt ]
                         then
