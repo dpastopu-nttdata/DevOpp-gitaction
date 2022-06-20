@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ConnectedApp xmlns="http://soap.sforce.com/2006/04/metadata">
+    <contactEmail>dpastopu@nttdata.com</contactEmail>
+    <label>CI Tool</label>
+    <oauthConfig>
+        <callbackUrl>http://localhost:1717/OauthRedirect</callbackUrl>
+        <certificate>MIIDtTCCAp0CFBSDwWtMYvxaNUvtTDWG11uTuhcPMA0GCSqGSIb3DQEBCwUAMIGWMQswCQYDVQQGEwJFUzEMMAoGA1UECAwDWkdaMREwDwYDVQQHDAhaYXJhZ296YTEQMA4GA1UECgwHTlRUREFUQTEQMA4GA1UECwwHTlRUREFUQTEdMBsGA1UEAwwUZHBhc3RvcHVAbnR0ZGF0YS5jb20xIzAhBgkqhkiG9w0BCQEWFGRwYXN0b3B1QG50dGRhdGEuY29tMB4XDTIyMDYxNjA4MDgwOVoXDTIzMDYxNjA4MDgwOVowgZYxCzAJBgNVBAYTAkVTMQwwCgYDVQQIDANaR1oxETAPBgNVBAcMCFphcmFnb3phMRAwDgYDVQQKDAdOVFREQVRBMRAwDgYDVQQLDAdOVFREQVRBMR0wGwYDVQQDDBRkcGFzdG9wdUBudHRkYXRhLmNvbTEjMCEGCSqGSIb3DQEJARYUZHBhc3RvcHVAbnR0ZGF0YS5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQD7zQS0lT2BiQ520IIHMCSoBZFaapmPfET15Ykfocm0K8cIm9fuMl1HBD7MQstIcA4tNFtyyH44Ya/trJ1KJw7453LXmJzRx/zERUNq8YSDJPA0aWmAlmds6AhBWBByHDEZ6mdaVg/jjSUEwerHdqxD+/7zz9+7YY9pmrwMnfmsGLbL6WDPWz+sWN0ny3pWlXX5vA/YiqyhPS5gZ2R0y6XJtvQ3DbcogACG8InSNDaVPoUR7qTYHZTNbRAEToThWpq9cHqzcMH3Gn2AkjLxoJ1zBi1LNFjkwSYVPF2Gz1fxRb00oeYvcx/3RWgw97UR2xT3P4/kMhInILwYn/3CjpMrAgMBAAEwDQYJKoZIhvcNAQELBQADggEBAKqDb41TsNSzc5M8yB/znyDXUdRYLNUTnxKsU3s/UOM47UfJoVJDmfnH2Vh+f0tYwPWn1zWMfEvcDQxJ1nCosDbW2lG8innJU+8c5DFl0pYHpBHx9CD6ncTSaLf6i4xaARUepv3XVh6NGz6i28ve94sCROJBG1t3yKYm2M5+Np4mmAvZ5viOYfFW63gyjPO5q7ahrbNaWnWRsWLBP2Sc5GvXPh+H5bUP/DVSSgJrp0MCm4sGNmf84MccC1ByciXfbVpqcV2WZP+zO6Yr6Nua5cMQ0gnS+PQVN5rA9MO0+rZWcvEj/np+MPq/hkyO7wgaA+ZsupJ0HvC5vxO6z8QdtNs=</certificate>
+        <consumerKey>3MVG9LzKxa43zqdIrZ6eKNdeIPdWaiPZ.TKTpsW0F7y34lFdcEQvsfi948R0HlR5qVnS5AlloR4ex1O7LJDip</consumerKey>
+        <isAdminApproved>true</isAdminApproved>
+        <isConsumerSecretOptional>false</isConsumerSecretOptional>
+        <isIntrospectAllTokens>false</isIntrospectAllTokens>
+        <isSecretRequiredForRefreshToken>false</isSecretRequiredForRefreshToken>
+        <scopes>Full</scopes>
+        <scopes>RefreshToken</scopes>
+    </oauthConfig>
+    <oauthPolicy>
+        <ipRelaxation>ENFORCE</ipRelaxation>
+        <refreshTokenPolicy>zero</refreshTokenPolicy>
+    </oauthPolicy>
+    <permissionSetName>Continuous Integration</permissionSetName>
+    <profileName>System Administrator</profileName>
+</ConnectedApp>

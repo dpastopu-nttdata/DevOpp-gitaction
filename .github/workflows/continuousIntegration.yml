@@ -1,14 +1,15 @@
-name: PR from developer branches to develop
+name: Promotion to a new environment
 
 on:
     pull_request:
         types: [opened, synchronize, reopened]
-        branches: develop*
+        branches: [uat, staging, master]
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-    continuousIntegration-develop:
-        if: (contains(github.head_ref, 'feature/') || contains(github.head_ref, 'hotfix/')) && github.event.pull_request.merged != true
+    # This workflow runs when a PR is created to uat, staging or master
+    continuousIntegration:
+        if: github.event.pull_request.merged != true
         # The type of runner that the job will run on
         runs-on: ubuntu-latest
         env:
@@ -27,18 +28,22 @@ jobs:
                   cache: "npm"
             - name: Install Salesforce CLI
               run: |
-                  sudo npm install sfdx-cli@${{ secrets[env.SFDXCLI] }} --location=global
+                  sudo npm install sfdx-cli@${{ secrets[env.SFDXCLI] }} --global
                   sfdx version --verbose --json
               env:
                   SFDXCLI: "SALESFORCE_SFDXCLI_VERSION"
             - name: Authenticate base org
               run: |
+                  instance="https://test.salesforce.com"
+                  if [ ${{ github.base_ref }} == 'master' ]; then
+                    instance="https://login.salesforce.com"
+                  fi
                   echo "${{ secrets[env.JWT] }}" > server.key
-                  sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl https://test.salesforce.com -a Int
+                  sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl $instance -a ${{ github.base_ref }}
               env:
                   JWT: "SALESFORCE_JWT_SECRET_KEY"
-                  ORG: "SALESFORCE_DEVELOP_CLIENT_ID"
-                  USER: "SALESFORCE_DEVELOP_USER_NAME"
+                  ORG: "SALESFORCE_${{ github.base_ref }}_CLIENT_ID"
+                  USER: "SALESFORCE_${{ github.base_ref }}_USER_NAME"
             - name: Find comment with PackageXML
               uses: peter-evans/find-comment@v1
               id: packageXMLComment
@@ -62,9 +67,9 @@ jobs:
                   git fetch --all
             - name: Install sfdx-git-delta and sfdx-profiles-splitter 1
               uses: actions/checkout@v3
-              with: 
-                  repository: dpastopu-nttdata/sfdx-profiles-splitter 
-                  token: "${{ secrets.PERSONAL_GITHUB_TOKEN }}"
+              with:
+                  repository: dpastopu-nttdata/sfdx-profiles-splitter
+                  token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
                   path: sfdx-profiles-splitter
                   ref: master
             - name: Install sfdx-git-delta and sfdx-profiles-splitter 2
@@ -85,14 +90,17 @@ jobs:
                   fi
                   mkdir output
                   sfdx sgd:source:delta --to ${{ github.ref }} --from origin/${{ github.base_ref }} --repo . --output output -a $apiVersion -d
+                  echo "-- before uploadProfiles --"
                   git diff --name-only --diff-filter=AM origin/${{ github.base_ref }} -- force-app/main/default/profiles-splited  ${{ github.ref }} -- force-app/main/default/profiles-splited > uploadProfiles.txt
                   if [ -s uploadProfiles.txt ]
                   then
+                    echo "-- before profile copy --"
                     mkdir tmp
                     while read -r diffName
                     do
                       cp --parents "$diffName" tmp
                     done < uploadProfiles.txt
+                    echo "-- before profile merge --"
                     sfdx metadata:profiles:merge -i ./tmp/force-app/main/default/profiles-splited -o ./output/force-app/main/default/profiles --loglevel=trace
                     rm -rf tmp
                     membersTmplt="        <members>profile</\members>\n"
@@ -166,6 +174,7 @@ jobs:
                     fi
                   fi
                   echo "::set-output name=validateDestruction::$validateDestruction"
+                  #python scripts/getJestTests.py
             - name: Validate deployment
               id: validate_deployment
               run: |
@@ -194,18 +203,18 @@ jobs:
                     echo "github.head_ref=${{ github.head_ref }}"
                     echo "github.base_ref=${{ github.base_ref }}"
                     noRunTest=""
-                    if [ ${{ secrets.SALESFORCE_SPECIFIC_DEPLOY_QA_WORKFLOW }} == true ]
+                    if [ ${{ secrets.SALESFORCE_SPECIFIC_DEPLOY_ABOVE_INT }} == true ]
                     then
                       python scripts/getTestClass.py
                       if ! [ -f TestClassAux.txt ]
                       then
                         if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
                         then
-                          echo "sfdx force:mdapi:deploy -u Int -c -d output/metadata --apiversion $apiVersion -w=0 --json"
-                          JOBID=$(sfdx force:mdapi:deploy -u Int -c -d output/metadata --apiversion $apiVersion -w=0 -g --json | jq -r .result.id)
+                          echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -c -d output/metadata --apiversion $apiVersion -w=0 --json"
+                          JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                         else
-                          echo "sfdx force:source:deploy -u Int -c -x output/package/package.xml --apiversion $apiVersion -w=0--json"
-                          JOBID=$(sfdx force:source:deploy -u Int -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                          echo "sfdx force:source:deploy -u ${{ github.base_ref }} -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
+                          JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                         fi
                         noRunTest=";true"
                       else
@@ -213,11 +222,11 @@ jobs:
                         then
                           if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
                           then
-                            echo "sfdx force:mdapi:deploy -u Int -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -d output/metadata --apiversion $apiVersion -w=0 --json"
-                            JOBID=$(sfdx force:mdapi:deploy -u Int -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                            echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -d output/metadata --apiversion $apiVersion -w=0 --json"
+                            JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                           else
-                            echo "sfdx force:source:deploy -u Int -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
-                            JOBID=$(sfdx force:source:deploy -u Int -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                            echo "sfdx force:source:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
+                            JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                           fi
                         else
                           echo "=====DEPLOYMENT ERROR====="
@@ -228,16 +237,16 @@ jobs:
                     else
                       if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
                       then
-                        echo "sfdx force:mdapi:deploy -u Int -l RunLocalTests -c -d output/metadata --apiversion $apiVersion -w=0 --json"
-                        JOBID=$(sfdx force:mdapi:deploy -u Int -l RunLocalTests -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                        echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -d output/metadata --apiversion $apiVersion -w=0 --json"
+                        JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                       else
-                        echo "sfdx force:source:deploy -u Int -l RunLocalTests -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
-                        JOBID=$(sfdx force:source:deploy -u Int -l RunLocalTests -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json| jq -r .result.id)
+                        echo "sfdx force:source:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
+                        JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                       fi
                     fi
                     echo "JOBID=$JOBID"
-                    sfdx force:mdapi:deploy:report --jobid $JOBID -w -1 -u Int || true
-                    (sfdx force:mdapi:deploy:report --jobid $JOBID -w -1 -u Int --json 2> /dev/null || true) > deployValidation.json
+                    sfdx force:mdapi:deploy:report --jobid $JOBID -w -1 -u ${{ github.base_ref }} || true
+                    (sfdx force:mdapi:deploy:report --jobid $JOBID -w -1 -u ${{ github.base_ref }} --json 2> /dev/null || true) > deployValidation.json
                     if [ `jq .result deployValidation.json | wc -l` -gt 1 ]
                     then
                       if [ `jq .status deployValidation.json` == "1" ]
@@ -263,11 +272,10 @@ jobs:
                   apiVersion=${{ secrets.SFDX_GIT_DELTA_API_VERSION }}
                   if [ ! -z "${{steps.generate_delta.outputs.validateDestruction}}" ]
                   then
-                    DESTJOBID=$(sfdx force:mdapi:deploy -d output/destructiveChanges -u Int -l RunSpecifiedTests -r ${{ secrets.SALESFORCE_DEFAULT_TEST_CLASS }} -w -1 -c --apiversion $apiVersion --json --ignorewarnings | jq -r .result.id)
+                    DESTJOBID=$(sfdx force:mdapi:deploy -d output/destructiveChanges -u ${{ github.base_ref }} -l RunSpecifiedTests -r ${{ secrets.SALESFORCE_DEFAULT_TEST_CLASS }} -w -1 -c --apiversion $apiVersion --json --ignorewarnings | jq -r .result.id)
                     echo "DESTJOBID=$DESTJOBID"
-                    sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u Int || true
-                    (sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u Int --json 2> /dev/null || true) > destroyValidation.json
-
+                    sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u ${{ github.base_ref }} || true
+                    (sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u ${{ github.base_ref }} --json 2> /dev/null || true) > destroyValidation.json
                     if [ `jq .result destroyValidation.json | wc -l` -gt 1 ]
                     then
                       if [ `jq .status destroyValidation.json` == "1" ]
