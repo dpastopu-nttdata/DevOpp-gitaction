@@ -1,0 +1,22 @@
+name: clean artifacts
+
+on:
+    # workflow_dispatch allows to manual run the workflow
+    workflow_dispatch:
+    schedule:
+        - cron: "0 0 * * *"
+
+jobs:
+    remove-old-artifacts:
+        runs-on: self-hosted
+        timeout-minutes: 10
+        continue-on-error: true
+
+        steps:
+            - name: Remove old artifacts
+              uses: jimschubert/delete-artifacts-action@v1
+              with:
+                  GITHUB_TOKEN: ${{secrets.PERSONAL_GITHUB_TOKEN}}
+                  log_level: 'debug'
+                  min_bytes: '0'
+                  active_duration: '240h'
