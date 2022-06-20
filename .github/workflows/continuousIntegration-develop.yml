@@ -312,27 +312,27 @@ jobs:
                   fi
             - name: Checkout private repository
               uses: actions/checkout@v2
-              if: ${{ hashFiles('TestClassAux.txt','JestTestsAux.txt') }}
+              if: ${{ hashFiles('TestClassAux.txt') }}
               with:
                   repository: ${{ secrets.PMD_EXTERNAL_REPO }}
                   token: ${{ secrets.PMD_EXTERNAL_REPO_TOKEN }}
                   path: master
             - name: Run PMD
-              if: ${{ hashFiles('TestClassAux.txt','JestTestsAux.txt') }}
+              if: ${{ hashFiles('TestClassAux.txt') }}
               run: |
                   chmod +x ./master/pmd-bin/bin/run.sh
                   "./master/pmd-bin/bin/run.sh" pmd -d "./force-app/main/default" -f xml -l apex -R "./master/rules/all-apex.xml" -failOnViolation false> pmdRevision.xml
                   cat pmdRevision.xml
             - name: Install modules
-              if: ${{ hashFiles('TestClassAux.txt','JestTestsAux.txt') }}
+              if: ${{ hashFiles('TestClassAux.txt') }}
               run: npm install || true
             - name: Run Eslint
-              if: ${{ hashFiles('TestClassAux.txt','JestTestsAux.txt') }}
+              if: ${{ hashFiles('TestClassAux.txt') }}
               run: |
                   node_modules/eslint/bin/eslint.js force-app/main/default/lwc/ -c force-app/main/default/lwc/.eslintrc.json -f json -o eslintLWC.json  || true
                   cat eslintLWC.json
             - name: Run Aura Lint
-              if: ${{ hashFiles('TestClassAux.txt','JestTestsAux.txt') }}
+              if: ${{ hashFiles('TestClassAux.txt') }}
               run: |
                   echo "Running sfdx force:lightning:lint"
                   sfdx force:lightning:lint force-app/main/default/aura/ --json 2> auraEslintAux.json
@@ -347,7 +347,7 @@ jobs:
                   rm auraEslintAux.json
                   cat auraEslint.json
             - name: Check Quality
-              if: ${{ hashFiles('TestClassAux.txt','JestTestsAux.txt') }}
+              if: ${{ hashFiles('TestClassAux.txt') }}
               run: |
                   pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
                   export SONAR_SCANNER_VERSION=4.4.0.2170
