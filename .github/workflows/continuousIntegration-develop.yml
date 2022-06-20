@@ -166,30 +166,6 @@ jobs:
                     fi
                   fi
                   echo "::set-output name=validateDestruction::$validateDestruction"
-                  #python scripts/getJestTests.py
-            - name: Install Jest unit testing tools
-              if: ${{ hashFiles('JestTestsAux.txt') }}
-              id: install_jest
-              run: |
-                  if [ -f JestTestsAux.txt ]
-                  then
-                    sfdx force:lightning:lwc:test:setup
-                    lwc=$(cat JestTestsAux.txt | tr "," "\n")
-                    relatedTests=""
-                    for lwcName in $lwc
-                    do
-                      relatedTests+="force-app/main/default/lwc/$lwcName/$lwcName.js "
-                    done
-                    echo "::set-output name=relatedTests::$relatedTests"
-                  fi
-            - name: Validate LWC
-              if: ${{ hashFiles('JestTestsAux.txt') }}
-              run: |
-                  if [ ! -z "${{steps.install_jest.outputs.relatedTests}}" ]
-                  then
-                    echo "npx jest --findRelatedTests ${{steps.install_jest.outputs.relatedTests}}"
-                    npx jest --findRelatedTests ${{steps.install_jest.outputs.relatedTests}}
-                  fi
             - name: Validate deployment
               id: validate_deployment
               run: |
