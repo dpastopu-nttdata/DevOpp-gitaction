@@ -126,12 +126,9 @@ jobs:
                     echo ${{steps.get_deploy_id.outputs.quickDeployId}}
                     if [ `echo "${{steps.get_deploy_id.outputs.quickDeployId}}" | grep ";" | wc -l` -gt 0 ]
                     then
-                      echo "+++ IF1"
-
                       git diff --name-only --diff-filter=AM HEAD^ -- force-app/main/default/profiles-splited HEAD -- force-app/main/default/profiles-splited > uploadProfiles.txt
                       if [ -s uploadProfiles.txt ]
                       then
-                        echo "+++ IF2"
                         echo "cat uploadProfiles.txt"
                         cat uploadProfiles.txt
                         mkdir tmp
@@ -142,7 +139,6 @@ jobs:
                       fi
                       if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
                       then
-                        echo "+++ IF3"
                         git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
                         git fetch --all
                         git config remote.origin.fetch '+refs/pull/${{github.event.number}}/*:refs/pull/${{github.event.number}}/*'
@@ -157,7 +153,6 @@ jobs:
                         echo "-- before uploadProfiles --"
                         if [ -s uploadProfiles.txt ]
                         then
-                          echo "+++ IF4" 
                           sfdx metadata:profiles:merge -i ./tmp/force-app/main/default/profiles-splited -o ./output/force-app/main/default/profiles --loglevel=trace
                           rm -rf tmp
                           for filename in output/force-app/main/default/profiles/*; do
@@ -177,7 +172,6 @@ jobs:
                         echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -d output/metadata --apiversion $apiVersion -w=0 --json"
                         JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                       else
-                        echo "+++ ELSE3"
                         echo "sfdx force:source:deploy -u ${{ github.base_ref }} -x package.xml --apiversion $apiVersion -w=0 --json"
                         if [ -s uploadProfiles.txt ]
                         then
@@ -198,7 +192,6 @@ jobs:
                         JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -x package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
                       fi
                     else
-                      echo "+++ ELSE1"
                       echo "sfdx force:mdapi:deploy -q ${{steps.get_deploy_id.outputs.quickDeployId}} -u ${{ github.base_ref }} -w=0 --json"
                       (sfdx force:mdapi:deploy -q ${{steps.get_deploy_id.outputs.quickDeployId}} -u ${{ github.base_ref }} -w=0 --json || true) > deploy.json
                       if [ -s deploy.json ]
@@ -208,7 +201,6 @@ jobs:
                       fi
                       #JOBID=$(sfdx force:mdapi:deploy -q ${{steps.get_deploy_id.outputs.quickDeployId}} -u ${{ github.base_ref }} -w=0 --json | jq -r .result.id)
                     fi
-                    echo "+++ FIN IF"
                     echo "JOBID=${JOBID}"
                     sfdx force:mdapi:deploy:report --jobid ${JOBID} -w -1 -u ${{ github.base_ref }} || true
                     (sfdx force:mdapi:deploy:report --jobid ${JOBID} -w -1 -u ${{ github.base_ref }} --json 2> /dev/null || true) > quickDeploy.json
@@ -230,8 +222,8 @@ jobs:
                     message=""
                     if [ $deploymentSuccess == true ]
                     then
-                      echo "+++ script changeLabel"
-                      #python scripts/changeLabel.py ${{github.event.pull_request.number}} ${{ secrets.GITHUB_TOKEN }} deployed
+                      echo "+++ script changeLabel run"
+                      python scripts/changeLabel.py ${{github.event.pull_request.number}} ${{ secrets.GITHUB_TOKEN }} deployed
                       iconStatus=":white_check_mark:"
                       message="Deployment completed successfully"
                     else
