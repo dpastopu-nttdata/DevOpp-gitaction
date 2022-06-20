@@ -231,7 +231,7 @@ jobs:
                     if [ $deploymentSuccess == true ]
                     then
                       echo "+++ script changeLabel"
-                      python scripts/changeLabel.py ${{github.event.pull_request.number}} ${{ secrets.GITHUB_TOKEN }} deployed
+                      #python scripts/changeLabel.py ${{github.event.pull_request.number}} ${{ secrets.GITHUB_TOKEN }} deployed
                       iconStatus=":white_check_mark:"
                       message="Deployment completed successfully"
                     else
