@@ -1,0 +1,300 @@
+name: Quick deploy
+
+on:
+    pull_request:
+        types: [labeled]
+        branches: [develop*, uat, staging, master]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+    quickDeploy:
+        if: github.event.label.name == 'deploy'
+        runs-on: ubuntu-latest
+        env:
+            SFDX_JSON_TO_STDOUT: true
+            SFDX_AUTOUPDATE_DISABLE: true
+
+        steps:
+            # Checks-out target branch of the pull request
+            - uses: actions/checkout@v2
+              with:
+                  fetch-depth: 5
+            - uses: actions/setup-node@v2
+              with:
+                  node-version: "16"
+                  cache: "npm"
+            - name: Install Salesforce CLI
+              run: |
+                  sudo npm install sfdx-cli@${{ secrets[env.SFDXCLI] }} --location=global
+                  sfdx version --verbose --json
+              env:
+                  SFDXCLI: "SALESFORCE_SFDXCLI_VERSION"
+            - name: Authenticate base org
+              run: |
+                  instance="https://test.salesforce.com"
+                  if [ ${{ github.base_ref }} == 'master' ]; then
+                    instance="https://test.salesforce.com"
+                  fi
+                  echo "${{ secrets[env.JWT] }}" > server.key
+                  sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl $instance -a ${{ github.base_ref }} -s
+              env:
+                  JWT: "SALESFORCE_JWT_SECRET_KEY"
+                  ORG: "SALESFORCE_${{ github.base_ref }}_CLIENT_ID"
+                  USER: "SALESFORCE_${{ github.base_ref }}_USER_NAME"
+            - name: Find comment with quickdeploy Id
+              uses: peter-evans/find-comment@v1
+              id: fc
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: QuickDeployId
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Get quickdeploy Id
+              id: get_deploy_id
+              run: |
+                  output=$(curl -H "Accept: application/vnd.github.v3+json" -H "authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.fc.outputs.comment-id}})
+                  quickDeployId=$(jq -r '.body' <<< "$output")
+                  quickDeployId=$(cut -d':' -f 2 <<< "$quickDeployId")
+                  echo $quickDeployId
+                  echo "::set-output name=quickDeployId::$quickDeployId"
+            - name: Start Deployment comment
+              run: |
+                  pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+                  deploymentCommentStatus="<h1>Deployment status</h1><table><tr><td style=\"vertical-align: middle;border: none;\"><img src=\"https://icagr.es/Content/themes/icagr/imagenes/ajax-loader-t.gif\" width=\"20\" height=\"20\" /> </td><td style=\"vertical-align: middle;\"><b>Deploying to ${{ github.base_ref }}...</b></td><td style=\"vertical-align: middle;\"><a href=\"https://github.com/${{ github.repository }}/actions/runs/$GITHUB_RUN_ID\">View Details</a></td></tr></table>"
+                  echo $deploymentCommentStatus
+                  deploymentCommentStatus=${deploymentCommentStatus//$'\n'/\\r\\n}
+                  deploymentCommentStatus=${deploymentCommentStatus//\"/\\\"}
+                  echo $deploymentCommentStatus
+                  deploymentCommentStatusJSON="{\"body\": \"$deploymentCommentStatus\"}"
+                  echo $deploymentCommentStatusJSON > commentStatus.json
+                  curl -X POST \
+                    https://api.github.com/repos/${{ github.repository }}/issues/$pull_number/comments \
+                    -H 'Accept: application/vnd.github.corsair-preview+json' \
+                    -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                    -d @commentStatus.json
+                  if [ ${{ secrets.RUN_REGRESSION_TESTING }} == true ]
+                  then
+                    echo "Regression testing must be run"
+                    echo "Run Regression testing" > RUN_REGRESSION_TESTING.txt
+                    cat RUN_REGRESSION_TESTING.txt
+                  fi
+            - name: Find comment with PackageXML
+              uses: peter-evans/find-comment@v1
+              id: packageXMLComment
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: PackageXML
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Find comment with DestructiveXML
+              uses: peter-evans/find-comment@v1
+              id: destructivePackageXMLComment
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: DestructiveXML
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Find comment with Deployment Status
+              uses: peter-evans/find-comment@v1
+              id: statusComment
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: Deployment
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Install sfdx-git-delta and sfdx-profiles-splitter 1
+              uses: actions/checkout@v3
+              with:
+                  repository: dpastopu-nttdata/sfdx-profiles-splitter
+                  token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+                  path: sfdx-profiles-splitter
+                  ref: master
+            - name: Install sfdx-git-delta and sfdx-profiles-splitter 2
+              run: |
+                  cd sfdx-profiles-splitter
+                  yarn install
+                  sfdx plugins:link .
+                  cd ..
+                  echo y | sfdx plugins:install sfdx-git-delta
+            - uses: actions/setup-python@v1
+            - uses: BSFishy/pip-action@v1
+              with:
+                  packages: |
+                      PyGithub
+            - name: Quick deploy
+              run: |
+                  apiVersion=${{ secrets.SFDX_GIT_DELTA_API_VERSION }}
+                  if [ -n "${{steps.packageXMLComment.outputs.comment-id}}" ]
+                  then
+                    echo "Quick deploy:${{steps.get_deploy_id.outputs.quickDeployId}}"
+                    echo ${{steps.get_deploy_id.outputs.quickDeployId}}
+                    if [ `echo "${{steps.get_deploy_id.outputs.quickDeployId}}" | grep ";" | wc -l` -gt 0 ]
+                    then
+                      git diff --name-only --diff-filter=AM HEAD^ -- force-app/main/default/profiles-splited HEAD -- force-app/main/default/profiles-splited > uploadProfiles.txt
+                      if [ -s uploadProfiles.txt ]
+                      then
+                        echo "cat uploadProfiles.txt"
+                        cat uploadProfiles.txt
+                        mkdir tmp
+                        while read -r diffName
+                        do
+                          cp --parents "$diffName" tmp
+                        done < uploadProfiles.txt
+                      fi
+                      if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
+                      then
+                        git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+                        git fetch --all
+                        git config remote.origin.fetch '+refs/pull/${{github.event.number}}/*:refs/pull/${{github.event.number}}/*'
+                        git fetch --all
+                        apiVersion=""
+                        if [ "${{ secrets.SFDX_GIT_DELTA_API_VERSION }}" != "null" ]
+                        then
+                          apiVersion="${{ secrets.SFDX_GIT_DELTA_API_VERSION }}"
+                        fi
+                        mkdir output
+                        sfdx sgd:source:delta --to ${{ github.ref }} --from origin/${{ github.base_ref }} --repo . --output output -a $apiVersion -d
+                        echo "-- before uploadProfiles --"
+                        if [ -s uploadProfiles.txt ]
+                        then
+                          sfdx metadata:profiles:merge -i ./tmp/force-app/main/default/profiles-splited -o ./output/force-app/main/default/profiles --loglevel=trace
+                          rm -rf tmp
+                          for filename in output/force-app/main/default/profiles/*; do
+                            mv "$filename" "${filename/-meta.xml.profile/.profile-meta.xml}"
+                          done
+                        fi
+                        echo "--- package.xml generated with added and modified metadata ---"
+                        cat output/package/package.xml
+                        echo "--- destructiveChanges.xml generated with deleted metadata ---"
+                        cat output/destructiveChanges/destructiveChanges.xml
+                        cp sfdx-project.json output
+                        cd output
+                        echo "-- before convert --"
+                        sfdx force:source:convert -r force-app/ -d metadata
+                        sed -i "s/<version>.*<\/version>/<version>$apiVersion<\/version>/g" metadata/package.xml
+                        cd ..
+                        echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -d output/metadata --apiversion $apiVersion -w=0 --json"
+                        JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                      else
+                        echo "sfdx force:source:deploy -u ${{ github.base_ref }} -x package.xml --apiversion $apiVersion -w=0 --json"
+                        if [ -s uploadProfiles.txt ]
+                        then
+                          sfdx metadata:profiles:merge -i tmp/force-app/main/default/profiles-splited -o force-app/main/default/profiles
+                          rm -rf tmp
+                          for filename in force-app/main/default/profiles/*; do
+                            mv "$filename" "${filename/-meta.xml.profile/.profile-meta.xml}"
+                          done
+                        fi
+                        packageXML=`curl -X GET https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.packageXMLComment.outputs.comment-id}} -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' | jq .body`
+                        packageXML=${packageXML//PackageXML;\\r\\n\`\`\`xml\\r\\n/}
+                        packageXML=${packageXML//\`\`\`/}
+                        packageXML=${packageXML//\\\"/\"}
+                        packageXML=${packageXML%?}
+                        packageXML=${packageXML#?}
+                        echo $packageXML | sed 's/\\r\\n/|/g' | tr '|' '\n' > package.xml
+                        cat package.xml
+                        JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -x package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                      fi
+                    else
+                      echo "sfdx force:mdapi:deploy -q ${{steps.get_deploy_id.outputs.quickDeployId}} -u ${{ github.base_ref }} -w=0 --json"
+                      (sfdx force:mdapi:deploy -q ${{steps.get_deploy_id.outputs.quickDeployId}} -u ${{ github.base_ref }} -w=0 --json || true) > deploy.json
+                      if [ -s deploy.json ]
+                      then
+                        cat deploy.json
+                        JOBID=$(cat deploy.json | jq -r .result.id)
+                      fi
+                      #JOBID=$(sfdx force:mdapi:deploy -q ${{steps.get_deploy_id.outputs.quickDeployId}} -u ${{ github.base_ref }} -w=0 --json | jq -r .result.id)
+                    fi
+                    echo "JOBID=${JOBID}"
+                    sfdx force:mdapi:deploy:report --jobid ${JOBID} -w -1 -u ${{ github.base_ref }} || true
+                    (sfdx force:mdapi:deploy:report --jobid ${JOBID} -w -1 -u ${{ github.base_ref }} --json 2> /dev/null || true) > quickDeploy.json
+                    cat quickDeploy.json
+                    deploymentSuccess=false
+                    if [ `jq .result quickDeploy.json | wc -l` -gt 1 ]
+                    then
+                      if [ `jq .status quickDeploy.json` == "1" ]
+                      then
+                        echo "=====DEPLOYMENT ERROR====="
+                      else
+                        echo "=====DEPLOYMENT VALIDATED====="
+                        deploymentSuccess=true
+                      fi
+                    else
+                      echo "=====ERROR====="
+                    fi
+                    iconStatus=""
+                    message=""
+                    if [ $deploymentSuccess == true ]
+                    then
+                      echo "+++ script changeLabel run"
+                      python scripts/changeLabel.py ${{github.event.pull_request.number}} ${{ secrets.GITHUB_TOKEN }} deployed
+                      iconStatus=":white_check_mark:"
+                      message="Deployment completed successfully"
+                    else
+                      iconStatus=":red_circle:"
+                      message="Deployment error"
+                    fi
+                    deploymentCommentStatus="<h1>Deployment status</h1><table><tr><td style=\"vertical-align: middle;border: none;\">$iconStatus</td><td style=\"vertical-align: middle;\"><b>$message</b></td><td style=\"vertical-align: middle;\"><a href=\"https://github.com/${{ github.repository }}/actions/runs/$GITHUB_RUN_ID\">View Details</a></td></tr></table>"
+                    echo $deploymentCommentStatus
+                    deploymentCommentStatus=${deploymentCommentStatus//$'\n'/\\r\\n}
+                    deploymentCommentStatus=${deploymentCommentStatus//\"/\\\"}
+                    echo $deploymentCommentStatus
+                    deploymentCommentStatusJSON="{\"body\": \"$deploymentCommentStatus\"}"
+                    echo $deploymentCommentStatusJSON > commentStatus.json
+                    curl --request PATCH \
+                      https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.statusComment.outputs.comment-id}} \
+                      -H 'Accept: application/vnd.github.corsair-preview+json' \
+                      -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                      -d @commentStatus.json
+                  fi
+                  if [ -n "${{steps.destructivePackageXMLComment.outputs.comment-id}}" ]
+                  then
+                    echo "+++ destructive"
+                    echo "sfdx force:mdapi:deploy -d destructiveChanges --ignorewarnings"
+                    mkdir destructiveChanges
+                    destructivePackageXML=`curl -X GET https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.destructivePackageXMLComment.outputs.comment-id}} -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' | jq .body`
+                    destructivePackageXML=${destructivePackageXML//DestructiveXML;\\r\\n\`\`\`xml\\r\\n/}
+                    destructivePackageXML=${destructivePackageXML//\`\`\`/}
+                    destructivePackageXML=${destructivePackageXML//\\\"/\"}
+                    destructivePackageXML=${destructivePackageXML%?}
+                    destructivePackageXML=${destructivePackageXML#?}
+                    echo $destructivePackageXML | sed 's/\\r\\n/|/g' | tr '|' '\n' > destructiveChanges/destructiveChanges.xml
+                    cat destructiveChanges/destructiveChanges.xml
+                    echo "<?xml version='1.0' encoding='UTF-8'?><Package xmlns='http://soap.sforce.com/2006/04/metadata'><version>48.0</version></Package>" > destructiveChanges/package.xml
+                    DESTJOBID=$(sfdx force:mdapi:deploy -d destructiveChanges -u ${{ github.base_ref }} -l RunSpecifiedTests -r ${{ secrets.SALESFORCE_DEFAULT_TEST_CLASS }} -w=0 --json 2> /dev/null | jq -r .result.id)
+                    echo "DESTJOBID=$DESTJOBID"
+                    sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u ${{ github.base_ref }} || true
+                  fi
+            # Step to call a workflow to execute Automation tests from another repository
+            - name: Send dispatch to Automation repo for UAT
+              uses: convictional/trigger-workflow-and-wait@v1.3.0
+              env:
+                ENABLED_RUN: ${{ secrets.SALESFORCE_QA_AUTOMATION_UAT_ENABLED }}
+              if: ${{ github.base_ref == 'uat' && env.ENABLED_RUN == 'true' }}
+              with:
+                owner: seatcode
+                repo: salesforce-automation
+                github_token: ${{ secrets.FULL_REPO_GITHUB_TOKEN }}
+                workflow_file_name: UAT.yml
+                ref: development
+                inputs: '{"baseRef": "${{ github.ref }}","commitRequestId": "${{ github.event.pull_request.head.sha }}"}'
+            - name: Send dispatch to Automation repo for INT
+              uses: convictional/trigger-workflow-and-wait@v1.3.0
+              env:
+                ENABLED_RUN: ${{ secrets.SALESFORCE_QA_AUTOMATION_DEVELOP_ENABLED }}
+              if: ${{ github.base_ref  == 'develop' && env.ENABLED_RUN == 'true' }}
+              with:
+                owner: seatcode
+                repo: salesforce-automation
+                github_token: ${{ secrets.FULL_REPO_GITHUB_TOKEN }}
+                workflow_file_name: INT.yml
+                ref: development
+                inputs: '{"baseRef": "${{ github.ref }}","commitRequestId": "${{ github.event.pull_request.head.sha }}"}'
+            - name: Send dispatch to Automation repo for STAGING
+              uses: convictional/trigger-workflow-and-wait@v1.3.0
+              env:
+                ENABLED_RUN: ${{ secrets.SALESFORCE_QA_AUTOMATION_STAGING_ENABLED }}
+              if: ${{ github.base_ref == 'staging' && env.ENABLED_RUN == 'true' }}
+              with:
+                owner: seatcode
+                repo: salesforce-automation
+                github_token: ${{ secrets.FULL_REPO_GITHUB_TOKEN }}
+                workflow_file_name: STG.yml
+                ref: development
+                inputs: '{"baseRef": "${{ github.ref }}","commitRequestId": "${{ github.event.pull_request.head.sha }}"}'

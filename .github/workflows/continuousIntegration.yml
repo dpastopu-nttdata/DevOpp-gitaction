@@ -1,0 +1,382 @@
+name: Promotion to a new environment
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened]
+        branches: [uat, staging, master]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+    # This workflow runs when a PR is created to uat, staging or master
+    continuousIntegration:
+        if: github.event.pull_request.merged != true
+        # The type of runner that the job will run on
+        runs-on: ubuntu-latest
+        env:
+            SFDX_JSON_TO_STDOUT: true
+            SFDX_AUTOUPDATE_DISABLE: true
+
+        # Steps represent a sequence of tasks that will be executed as part of the job
+        steps:
+            # Checks-out merge branch of the pull request
+            - uses: actions/checkout@v2
+              with:
+                  ref: ${{ github.ref }}
+            - uses: actions/setup-node@v2
+              with:
+                  node-version: "16"
+                  cache: "npm"
+            - name: Install Salesforce CLI
+              run: |
+                  sudo npm install sfdx-cli@${{ secrets[env.SFDXCLI] }} --global
+                  sfdx version --verbose --json
+              env:
+                  SFDXCLI: "SALESFORCE_SFDXCLI_VERSION"
+            - name: Authenticate base org
+              run: |
+                  instance="https://test.salesforce.com"
+                  if [ ${{ github.base_ref }} == 'master' ]; then
+                    instance="https://login.salesforce.com"
+                  fi
+                  echo "${{ secrets[env.JWT] }}" > server.key
+                  sfdx force:auth:jwt:grant --clientid  ${{ secrets[env.ORG] }} --jwtkeyfile server.key --username ${{ secrets[env.USER] }} --instanceurl $instance -a ${{ github.base_ref }}
+              env:
+                  JWT: "SALESFORCE_JWT_SECRET_KEY"
+                  ORG: "SALESFORCE_${{ github.base_ref }}_CLIENT_ID"
+                  USER: "SALESFORCE_${{ github.base_ref }}_USER_NAME"
+            - name: Find comment with PackageXML
+              uses: peter-evans/find-comment@v1
+              id: packageXMLComment
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: PackageXML
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Find comment with DestructiveXML
+              uses: peter-evans/find-comment@v1
+              id: destructivePackageXMLComment
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: DestructiveXML
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Git Config & Fetch
+              id: gitFetch
+              run: |
+                  git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+                  git fetch --all
+                  git config remote.origin.fetch '+refs/pull/${{github.event.number}}/*:refs/pull/${{github.event.number}}/*'
+                  git fetch --all
+            - name: Install sfdx-git-delta and sfdx-profiles-splitter 1
+              uses: actions/checkout@v3
+              with:
+                  repository: dpastopu-nttdata/sfdx-profiles-splitter
+                  token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+                  path: sfdx-profiles-splitter
+                  ref: master
+            - name: Install sfdx-git-delta and sfdx-profiles-splitter 2
+              run: |
+                  cd sfdx-profiles-splitter
+                  yarn install
+                  sfdx plugins:link .
+                  cd ..
+                  echo y | sfdx plugins:install sfdx-git-delta
+            # SFDX_GIT_DELTA_API_VERSION secret must be informed as null if not used, "-a [apiVersion]" otherwise
+            - name: Generate delta comparison
+              id: generate_delta
+              run: |
+                  apiVersion=""
+                  if [ "${{ secrets.SFDX_GIT_DELTA_API_VERSION }}" != "null" ]
+                  then
+                    apiVersion="${{ secrets.SFDX_GIT_DELTA_API_VERSION }}"
+                  fi
+                  mkdir output
+                  sfdx sgd:source:delta --to ${{ github.ref }} --from origin/${{ github.base_ref }} --repo . --output output -a $apiVersion -d
+                  echo "-- before uploadProfiles --"
+                  git diff --name-only --diff-filter=AM origin/${{ github.base_ref }} -- force-app/main/default/profiles-splited  ${{ github.ref }} -- force-app/main/default/profiles-splited > uploadProfiles.txt
+                  if [ -s uploadProfiles.txt ]
+                  then
+                    echo "-- before profile copy --"
+                    mkdir tmp
+                    while read -r diffName
+                    do
+                      cp --parents "$diffName" tmp
+                    done < uploadProfiles.txt
+                    echo "-- before profile merge --"
+                    sfdx metadata:profiles:merge -i ./tmp/force-app/main/default/profiles-splited -o ./output/force-app/main/default/profiles --loglevel=trace
+                    rm -rf tmp
+                    membersTmplt="        <members>profile</\members>\n"
+                    for filename in output/force-app/main/default/profiles/*; do
+                      mv "$filename" "${filename/-meta.xml.profile/.profile-meta.xml}"
+                      baseProfile=`basename "$filename"`
+                      baseProfile=${baseProfile/-meta.xml.profile/}
+                      member=${membersTmplt/profile/$baseProfile}
+                      members=$members$member
+                    done
+                    sed -i "3i\    <types>\n${members}        <name>Profile</name>\n    </types>" output/package/package.xml
+                  fi
+                  echo "--- package.xml generated with added and modified metadata ---"
+                  cat output/package/package.xml
+                  echo "--- destructiveChanges.xml generated with deleted metadata ---"
+                  cat output/destructiveChanges/destructiveChanges.xml
+                  pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+                  validateDeployment=""
+                  if [ `grep "types" output/package/package.xml | wc -l` -gt 0 ]
+                  then
+                    validateDeployment="true"
+                    packageXML=$(<output/package/package.xml)
+                    packageXML=${packageXML//$'\n'/\\r\\n}
+                    packageXML=${packageXML//\"/\\\"}
+                    packageXML="PackageXML;\r\n\`\`\`xml\r\n`echo $packageXML`\r\n\`\`\`"
+                    packageXML="{\"body\": \"$packageXML\"}"
+                    echo $packageXML > commentPackage.json
+                    if [ -z "${{steps.packageXMLComment.outputs.comment-id}}" ]
+                    then
+                      echo "New Package"
+                      curl -X POST \
+                        https://api.github.com/repos/${{ github.repository }}/issues/$pull_number/comments \
+                        -H 'Accept: application/vnd.github.corsair-preview+json' \
+                        -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                        -d @commentPackage.json
+                    else
+                      echo "Update Package"
+                      curl --request PATCH \
+                        https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.packageXMLComment.outputs.comment-id}} \
+                        -H 'Accept: application/vnd.github.corsair-preview+json' \
+                        -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                        -d @commentPackage.json
+                    fi
+                  fi
+                  echo "::set-output name=validateDeployment::$validateDeployment"
+                  validateDestruction=""
+                  if [ `grep "types" output/destructiveChanges/destructiveChanges.xml | wc -l` -gt 0 ]
+                  then
+                    validateDestruction="true"
+                    destructivePackageXML=$(<output/destructiveChanges/destructiveChanges.xml)
+                    destructivePackageXML=${destructivePackageXML//$'\n'/\\r\\n}
+                    destructivePackageXML=${destructivePackageXML//\"/\\\"}
+                    destructivePackageXML="DestructiveXML;\r\n\`\`\`xml\r\n`echo $destructivePackageXML`\r\n\`\`\`"
+                    destructivePackageXML="{\"body\": \"$destructivePackageXML\"}"
+                    echo $destructivePackageXML > commentDestructivePackage.json
+                    if [ -z "${{steps.destructivePackageXMLComment.outputs.comment-id}}" ]
+                    then
+                      echo "New Destructive Package"
+                      curl -X POST \
+                        https://api.github.com/repos/${{ github.repository }}/issues/$pull_number/comments \
+                        -H 'Accept: application/vnd.github.corsair-preview+json' \
+                        -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                        -d @commentDestructivePackage.json
+                    else
+                      echo "Update Destructive Package"
+                      curl --request PATCH \
+                        https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.destructivePackageXMLComment.outputs.comment-id}} \
+                        -H 'Accept: application/vnd.github.corsair-preview+json' \
+                        -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                        -d @commentDestructivePackage.json
+                    fi
+                  fi
+                  echo "::set-output name=validateDestruction::$validateDestruction"
+            - name: Validate deployment
+              id: validate_deployment
+              run: |
+                  apiVersion=${{ secrets.SFDX_GIT_DELTA_API_VERSION }}
+                  if [ ! -z "${{steps.generate_delta.outputs.validateDeployment}}" ]
+                  then
+                    if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
+                    then
+                      cp sfdx-project.json output
+                      echo "--- base ---"
+                      ls -d $PWD/*
+                      cd output
+                      echo "--- output ---"
+                      ls -d $PWD/*
+                      sfdx force:source:convert -r force-app/ -d metadata
+                      echo "--- output ---"
+                      ls -d $PWD/*
+                      cat metadata/package.xml
+                      sed -i "s/<version>.*<\/version>/<version>$apiVersion<\/version>/g" metadata/package.xml
+                      cat metadata/package.xml
+                      cd ..
+                      echo "--- base ---"
+                      ls -d $PWD/*
+                    fi
+                    echo "github.ref=${{ github.ref }}"
+                    echo "github.head_ref=${{ github.head_ref }}"
+                    echo "github.base_ref=${{ github.base_ref }}"
+                    noRunTest=""
+                    if [ ${{ secrets.SALESFORCE_SPECIFIC_DEPLOY_ABOVE_INT }} == true ]
+                    then
+                      python scripts/getTestClass.py
+                      if ! [ -f TestClassAux.txt ]
+                      then
+                        if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
+                        then
+                          echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -c -d output/metadata --apiversion $apiVersion -w=0 --json"
+                          JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                        else
+                          echo "sfdx force:source:deploy -u ${{ github.base_ref }} -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
+                          JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                        fi
+                        noRunTest=";true"
+                      else
+                        if [ -s TestClassAux.txt ]
+                        then
+                          if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
+                          then
+                            echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -d output/metadata --apiversion $apiVersion -w=0 --json"
+                            JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                          else
+                            echo "sfdx force:source:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
+                            JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -l RunSpecifiedTests -r `cat TestClassAux.txt` -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                          fi
+                        else
+                          echo "=====DEPLOYMENT ERROR====="
+                          echo "You must include some class test in the deployment in order to deploy using the RunSpecifiedTests option"
+                          exit 1
+                        fi
+                      fi
+                    else
+                      if [ ${{ secrets.IS_MDAPI_USED_TO_DEPLOY }} == true ]
+                      then
+                        echo "sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -d output/metadata --apiversion $apiVersion -w=0 --json"
+                        JOBID=$(sfdx force:mdapi:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -d output/metadata --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                      else
+                        echo "sfdx force:source:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json"
+                        JOBID=$(sfdx force:source:deploy -u ${{ github.base_ref }} -l RunLocalTests -c -x output/package/package.xml --apiversion $apiVersion -w=0 --json | jq -r .result.id)
+                      fi
+                    fi
+                    echo "JOBID=$JOBID"
+                    sfdx force:mdapi:deploy:report --jobid $JOBID -w -1 -u ${{ github.base_ref }} || true
+                    (sfdx force:mdapi:deploy:report --jobid $JOBID -w -1 -u ${{ github.base_ref }} --json 2> /dev/null || true) > deployValidation.json
+                    if [ `jq .result deployValidation.json | wc -l` -gt 1 ]
+                    then
+                      if [ `jq .status deployValidation.json` == "1" ]
+                      then
+                        echo "=====DEPLOYMENT ERROR====="
+                        exit 1
+                      else
+                        echo "=====DEPLOYMENT VALIDATED====="
+                        deployValidation=`jq .result.id deployValidation.json | sed 's/"//g'`
+                        echo "noRunTest=$noRunTest"
+                        echo "deployValidation: " ${deployValidation}
+                        echo "::set-output name=deployValidation::$deployValidation"
+                        echo "::set-output name=noRunTest::$noRunTest"
+                      fi
+                    else
+                      echo "=====ERROR====="
+                      exit 1
+                    fi
+                  fi
+            - name: Validate destruction
+              id: validate_destruction
+              run: |
+                  apiVersion=${{ secrets.SFDX_GIT_DELTA_API_VERSION }}
+                  if [ ! -z "${{steps.generate_delta.outputs.validateDestruction}}" ]
+                  then
+                    DESTJOBID=$(sfdx force:mdapi:deploy -d output/destructiveChanges -u ${{ github.base_ref }} -l RunSpecifiedTests -r ${{ secrets.SALESFORCE_DEFAULT_TEST_CLASS }} -w -1 -c --apiversion $apiVersion --json --ignorewarnings | jq -r .result.id)
+                    echo "DESTJOBID=$DESTJOBID"
+                    sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u ${{ github.base_ref }} || true
+                    (sfdx force:mdapi:deploy:report --jobid $DESTJOBID -w -1 -u ${{ github.base_ref }} --json 2> /dev/null || true) > destroyValidation.json
+                    if [ `jq .result destroyValidation.json | wc -l` -gt 1 ]
+                    then
+                      if [ `jq .status destroyValidation.json` == "1" ]
+                      then
+                        echo "=====DESTROY ERROR====="
+                        exit 1
+                      else
+                        echo "=====DETROY VALIDATED====="
+                      fi
+                    else
+                      echo "=====ERROR====="
+                      exit 1
+                    fi
+                  fi
+            - name: Find comment with quickdeploy Id
+              uses: peter-evans/find-comment@v1
+              id: fc
+              with:
+                  issue-number: ${{github.event.number}}
+                  body-includes: QuickDeployId
+                  token: ${{ secrets.GITHUB_TOKEN }}
+            - name: Store quickDeployId on comments
+              id: get_deploy_id
+              run: |
+                  pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+                  quickDeployMsg="QuickDeployId:${{steps.validate_deployment.outputs.deployValidation}}${{steps.validate_deployment.outputs.noRunTest}}"
+                  quickDeploy="{\"body\": \"$quickDeployMsg\"}"
+                  echo $quickDeploy >commentQuickDeploy.json
+                  if [ -z "${{steps.fc.outputs.comment-id}}" ]
+                  then
+                    curl -X POST \
+                    https://api.github.com/repos/${{ github.repository }}/issues/$pull_number/comments \
+                    -H 'Accept: application/vnd.github.corsair-preview+json' \
+                    -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                    -d @commentQuickDeploy.json
+                  else
+                    curl --request PATCH \
+                    https://api.github.com/repos/${{ github.repository }}/issues/comments/${{steps.fc.outputs.comment-id}} \
+                    -H 'Accept: application/vnd.github.corsair-preview+json' \
+                    -H 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+                    -d @commentQuickDeploy.json
+                  fi
+            - name: Checkout private repository
+              uses: actions/checkout@v2
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              with:
+                  repository: ${{ secrets.PMD_EXTERNAL_REPO }}
+                  token: ${{ secrets.PMD_EXTERNAL_REPO_TOKEN }}
+                  path: master
+            - name: Run PMD
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              run: |
+                  chmod +x ./master/pmd-bin/bin/run.sh
+                  "./master/pmd-bin/bin/run.sh" pmd -d "./force-app/main/default" -f xml -l apex -R "./master/rules/all-apex.xml" -failOnViolation false> pmdRevision.xml
+                  cat pmdRevision.xml
+            - name: Install modules
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              run: npm install || true
+            - name: Run Eslint
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              run: |
+                  node_modules/eslint/bin/eslint.js force-app/main/default/lwc/ -c force-app/main/default/lwc/.eslintrc.json -f json -o eslintLWC.json  || true
+                  cat eslintLWC.json
+            - name: Run Aura Lint
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              run: |
+                  echo "Running sfdx force:lightning:lint"
+                  sfdx force:lightning:lint force-app/main/default/aura/ --json 2> auraEslintAux.json
+                  echo "Parsing auraEslintAux.json"
+                  sed -i -e '1!b' -e '/^{/!d' auraEslintAux.json
+                  JSONAura=`jq .data auraEslintAux.json`
+                  JSONAura=${JSONAura%?}
+                  JSONAura=${JSONAura#?}
+                  JSONAura=${JSONAura//\"file/\"filePath}
+                  JSONAura=${JSONAura//\"result/\"messages}
+                  echo $JSONAura | sed 's/\\"/"/g' > auraEslint.json
+                  rm auraEslintAux.json
+                  cat auraEslint.json
+            - name: Check Quality
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              run: |
+                  pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+                  export SONAR_SCANNER_VERSION=4.4.0.2170
+                  export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION-linux
+                  curl --create-dirs -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION-linux.zip
+                  unzip -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+                  export PATH=$SONAR_SCANNER_HOME/bin:$PATH
+                  export SONAR_SCANNER_OPTS="-server"
+                  echo "sonar-scanner -Dsonar.organization=seatcode -Dsonar.projectKey=seatcode_salesforce-germany -Dsonar.sources=force-app/main/default -Dsonar.host.url=https://sonarcloud.io -Dsonar.exclusions=force-app/main/default/**/*.xml -Dsonar.pullrequest.branch= ${{ github.ref }} -Dsonar.pullrequest.key= $pull_number -Dsonar.pullrequest.base= ${{ github.base_ref }}"
+                  sonar-scanner \
+                  -Dsonar.organization=seatcode \
+                  -Dsonar.projectKey=seatcode_salesforce-germany \
+                  -Dsonar.sources=force-app/main/default \
+                  -Dsonar.host.url=https://sonarcloud.io \
+                  -Dsonar.exclusions=force-app/main/default/**/*.xml \
+                  -Dsonar.coverage.exclusions=force-app/main/default/**/*.cls,force-app/main/default/**/*.js \
+                  -Dsonar.pullrequest.branch=${{ github.ref }} \
+                  -Dsonar.pullrequest.key=$pull_number \
+                  -Dsonar.pullrequest.base=${{ github.base_ref }} \
+                  -Dsonar.pullrequest.provider=github \
+                  -Dsonar.pullrequest.github.repository=seatcode/salesforce-germany \
+                  -Dsonar.pullrequest.github.endpoint=https://api.github.com/ \
+                  -Dsonar.login=${{ secrets.SONARQUBE_TOKEN }} \
+                  -Dsonar.eslint.reportPaths=eslintLWC.json,auraEslint.json \
+                  -Dsonar.apex.pmd.reportPaths=pmdRevision.xml
