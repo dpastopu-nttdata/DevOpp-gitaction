@@ -3,7 +3,7 @@
     <fullName>textField__c</fullName>
     <externalId>false</externalId>
     <label>textField</label>
-    <length>50</length>
+    <length>60</length>
     <required>false</required>
     <trackFeedHistory>false</trackFeedHistory>
     <type>Text</type>
