@@ -327,8 +327,8 @@ jobs:
               if: ${{ hashFiles('TestClassAux.txt') }}
               run: npm install || true
             - name: Check Quality
-              # if: ${{ hashFiles('TestClassAux.txt') }}
-              # run: |
+              if: ${{ hashFiles('TestClassAux.txt') }}
+              run: | 
               #    pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
               #    export SONAR_SCANNER_VERSION=4.4.0.2170
               #    export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION-linux
