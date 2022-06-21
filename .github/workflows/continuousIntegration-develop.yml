@@ -326,7 +326,7 @@ jobs:
             - name: Install modules
               if: ${{ hashFiles('TestClassAux.txt') }}
               run: npm install || true
-            - # name: Check Quality
+            - name: Check Quality
               # if: ${{ hashFiles('TestClassAux.txt') }}
               # run: |
               #    pull_number=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
