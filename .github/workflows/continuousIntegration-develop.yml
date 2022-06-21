@@ -326,26 +326,6 @@ jobs:
             - name: Install modules
               if: ${{ hashFiles('TestClassAux.txt') }}
               run: npm install || true
-            - name: Run Eslint
-              if: ${{ hashFiles('TestClassAux.txt') }}
-              run: |
-                  node_modules/eslint/bin/eslint.js force-app/main/default/lwc/ -c force-app/main/default/lwc/.eslintrc.json -f json -o eslintLWC.json  || true
-                  cat eslintLWC.json
-            - name: Run Aura Lint
-              if: ${{ hashFiles('TestClassAux.txt') }}
-              run: |
-                  echo "Running sfdx force:lightning:lint"
-                  sfdx force:lightning:lint force-app/main/default/aura/ --json 2> auraEslintAux.json
-                  echo "Parsing auraEslintAux.json"
-                  sed -i -e '1!b' -e '/^{/!d' auraEslintAux.json
-                  JSONAura=`jq .data auraEslintAux.json`
-                  JSONAura=${JSONAura%?}
-                  JSONAura=${JSONAura#?}
-                  JSONAura=${JSONAura//\"file/\"filePath}
-                  JSONAura=${JSONAura//\"result/\"messages}
-                  echo $JSONAura | sed 's/\\"/"/g' > auraEslint.json
-                  rm auraEslintAux.json
-                  cat auraEslint.json
             - name: Check Quality
               if: ${{ hashFiles('TestClassAux.txt') }}
               run: |
