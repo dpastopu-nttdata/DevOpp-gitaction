@@ -5,12 +5,11 @@ on:
     workflow_dispatch:
     schedule:
         - cron: "0 0 * * *"
-        # cron: "0 0 * * *"
-        # cron: "*/5 * * * *"
 
 jobs:
     remove-old-artifacts:
-        runs-on: self-hosted
+        # runs-on: self-hosted
+        runs-on: ubuntu-latest
         timeout-minutes: 10
         continue-on-error: true
 
