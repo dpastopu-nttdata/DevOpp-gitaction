@@ -93,8 +93,8 @@ jobs:
                       testResults
             - name: Install Cypress related tools & authorize agents
               run: |
-                  npm install -D cypress-xpath
-                  sfdx force:auth:jwt:grant --clientid ${{ secrets.SALESFORCE_UAT_CLIENT_ID }} --jwtkeyfile server.key --username ${{ secrets.CYPRESS_AGENT_USERS }} --instanceurl https://test.salesforce.com -a userAgent
+              #    npm install -D cypress-xpath
+              #    sfdx force:auth:jwt:grant --clientid ${{ secrets.SALESFORCE_UAT_CLIENT_ID }} --jwtkeyfile server.key --username ${{ secrets.CYPRESS_AGENT_USERS }} --instanceurl https://test.salesforce.com -a userAgent
             - name: Cypress.io
               uses: cypress-io/github-action@v2
               with:
@@ -106,6 +106,6 @@ jobs:
                   CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
             - name: Delete records from Regression Tests
               run: |
-                  Object=`jq --raw-output .SObject ./cypress-project/recordData.json`
-                  ObjectID=`jq --raw-output .Id ./cypress-project/recordData.json`
-                  sfdx force:data:record:delete -s $Object -i $ObjectID --perflog --json
+              #    Object=`jq --raw-output .SObject ./cypress-project/recordData.json`
+              #    ObjectID=`jq --raw-output .Id ./cypress-project/recordData.json`
+              #    sfdx force:data:record:delete -s $Object -i $ObjectID --perflog --json
