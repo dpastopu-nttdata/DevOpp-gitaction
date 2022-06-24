@@ -96,13 +96,13 @@ jobs:
               #    npm install -D cypress-xpath
               #    sfdx force:auth:jwt:grant --clientid ${{ secrets.SALESFORCE_master_CLIENT_ID }} --jwtkeyfile server.key --username ${{ secrets.CYPRESS_AGENT_USERS }} --instanceurl https://test.salesforce.com -a userAgent
             - name: Cypress.io
-              uses: cypress-io/github-action@v2
-              with:
-                  browser: chrome
-                  headless: true
-                  record: true
-                  project: ./cypress-project
-              env:
+              #uses: cypress-io/github-action@v2
+              #with:
+              #    browser: chrome
+              #    headless: true
+              #    record: true
+              #    project: ./cypress-project
+              #env:
               #    CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
             - name: Delete records from Regression Tests
               run: |
